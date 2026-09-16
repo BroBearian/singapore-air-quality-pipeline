@@ -47,7 +47,7 @@ def fetch_all(
     return pd.DataFrame(records)
 
 
-st.title("Singapore Air Quality Dashboard")
+st.title("Bear's Singapore Air Quality Dashboard")
 st.caption(
     "Hourly NEA/data.gov.sg readings processed through "
     "GitHub Actions, Python and Supabase. Refer to NEA for official advice."
