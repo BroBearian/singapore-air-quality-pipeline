@@ -1,0 +1,43 @@
+name: Scheduled air-quality ETL
+
+on:
+  schedule:
+    - cron: "52 * * * *"
+      timezone: "Asia/Singapore"
+
+  workflow_dispatch:
+    inputs:
+      days_back:
+        description: "Previous days to include; 1 means today and yesterday"
+        required: false
+        default: "1"
+
+concurrency:
+  group: singapore-air-quality-etl
+  cancel-in-progress: false
+
+jobs:
+  run-etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ETL
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DATA_GOV_API_KEY: ${{ secrets.DATA_GOV_API_KEY }}
+          DAYS_BACK: ${{ inputs.days_back || '1' }}
+        run: python scripts/run_etl.py
