@@ -112,7 +112,8 @@ metric_4.metric("Highest region", str(highest_pm25_row["region"]).title())
 if not freshness.empty:
     age = float(freshness.iloc[0]["observation_age_hours"])
     status = freshness.iloc[0]["freshness_status"]
-    metric_5.metric("Data freshness", status, delta=f"{age:.1f} hours old")
+    metric_5.metric("Data freshness", status)
+    metric_5.caption(f"Latest observation: {age:.1f} hours old")
 
 if current_pm25 >= 151:
     st.error("High hourly PM2.5 detected. Refer to official NEA health advice.")
