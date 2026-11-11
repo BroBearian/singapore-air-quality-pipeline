@@ -5,6 +5,40 @@ import plotly.express as px
 import streamlit as st
 from supabase import create_client
 
+SGT = "Asia/Singapore"
+PM25_LABEL = "1-hour PM2.5 (µg/m³)"
+PSI_LABEL = "24-hour PSI"
+PM25_BANDS = {
+    "Normal": ("green", "#147d64"),
+    "Elevated": ("orange", "#b25b05"),
+    "High": ("red", "#bc392e"),
+    "Very High": ("violet", "#8b389d"),
+    "Unknown": ("gray", "#6b7280"),
+}
+PSI_COLORS = {
+    "Good": "green",
+    "Moderate": "orange",
+    "Unhealthy": "red",
+    "Very Unhealthy": "violet",
+    "Hazardous": "violet",
+}
+REGION_COLORS = {
+    "Central": "#1666a5",
+    "East": "#a85d0c",
+    "North": "#7d50a5",
+    "South": "#16816e",
+    "West": "#c14263",
+}
+CHART_LABELS = {
+    "region": "Region",
+    "observed_at_sgt": "Observation time (SGT)",
+    "pm25_1h": PM25_LABEL,
+    "pm25_1h_band": "PM2.5 band",
+    "psi_24h": PSI_LABEL,
+    "psi_24h_category": "PSI category",
+}
+HISTORY_RANGES = {1: "1 day", 3: "3 days", 7: "7 days", 30: "30 days", 90: "90 days"}
+
 st.set_page_config(
     page_title="Singapore Air Quality",
     page_icon="🌫️",
@@ -27,18 +61,16 @@ def fetch_all(
     records: list[dict] = []
 
     while True:
-        query = (
-            supabase.table(table_name)
-            .select("*")
-            .range(offset, offset + page_size - 1)
-        )
-
+        query = supabase.table(table_name).select("*")
         if start_time:
-            query = query.gte("observed_at", start_time)
+            query = (
+                query.gte("observed_at", start_time)
+                .order("observed_at")
+                .order("region")
+            )
 
-        batch = query.execute().data or []
+        batch = query.range(offset, offset + page_size - 1).execute().data or []
         records.extend(batch)
-
         if len(batch) < page_size:
             break
 
@@ -47,185 +79,278 @@ def fetch_all(
     return pd.DataFrame(records)
 
 
+def prepare_readings(readings: pd.DataFrame) -> pd.DataFrame:
+    if readings.empty:
+        return readings
+
+    readings["region"] = readings["region"].str.title()
+    readings["observed_at_sgt"] = pd.to_datetime(
+        readings["observed_at"], utc=True
+    ).dt.tz_convert(SGT)
+    for column in ("pm25_1h", "psi_24h", "pm25_change_1h"):
+        readings[column] = pd.to_numeric(readings[column], errors="coerce")
+
+    return readings.sort_values(["observed_at_sgt", "region"])
+
+
+def format_reading(value: float, suffix: str = "") -> str:
+    return "Unavailable" if pd.isna(value) else f"{value:.0f}{suffix}"
+
+
+def render_regional_cards(latest: pd.DataFrame) -> None:
+    with st.container(key="regional_cards"):
+        columns = st.columns(len(REGION_COLORS), gap="small")
+    by_region = latest.set_index("region")
+
+    for region, column in zip(REGION_COLORS, columns, strict=True):
+        with column.container(border=True):
+            st.markdown(f"**{region}**")
+            if region not in by_region.index:
+                st.caption("No readings")
+                continue
+
+            row = by_region.loc[region]
+            pm25 = format_reading(row["pm25_1h"], " µg/m³")
+            psi = format_reading(row["psi_24h"])
+            band = row["pm25_1h_band"]
+            category = row["psi_24h_category"]
+            pm25_color = PM25_BANDS.get(band, PM25_BANDS["Unknown"])[0]
+            psi_color = PSI_COLORS.get(category, "gray")
+
+            st.caption("1-hour PM2.5")
+            st.markdown(f"**{pm25}**  \n:{pm25_color}-badge[{band}]")
+            st.caption(PSI_LABEL)
+            st.markdown(f"**{psi}**  \n:{psi_color}-badge[{category}]")
+            st.caption(f"{row['observed_at_sgt']:%d %b, %H:%M} SGT")
+
+
+def render_trend(
+    readings: pd.DataFrame,
+    metric: str,
+    thresholds: dict[int, str],
+) -> None:
+    st.subheader(CHART_LABELS[metric])
+    valid = readings[metric].dropna()
+    if valid.empty:
+        st.info("No readings for this indicator in the selected period.")
+        return
+
+    # Use Singapore wall-clock times so the chart is independent of browser timezone.
+    plot_data = readings.assign(
+        observed_at_sgt=readings["observed_at_sgt"].dt.tz_localize(None)
+    )
+    figure = px.line(
+        plot_data,
+        x="observed_at_sgt",
+        y=metric,
+        color="region",
+        labels=CHART_LABELS,
+        color_discrete_map=REGION_COLORS,
+        category_orders={"region": list(REGION_COLORS)},
+        markers=readings["observed_at_sgt"].nunique() == 1,
+    )
+    figure.update_traces(
+        connectgaps=False,
+        hovertemplate=(
+            "%{x|%d %b %Y, %H:%M} SGT<br>"
+            + CHART_LABELS[metric]
+            + ": %{y:.0f}"
+        ),
+    )
+    for value, label in thresholds.items():
+        if valid.min() <= value <= valid.max():
+            figure.add_hline(
+                y=value,
+                line_dash="dash",
+                line_color="#b25b05",
+                annotation_text=f"{label} · {value}",
+            )
+
+    figure.update_layout(
+        height=350,
+        margin=dict(l=12, r=12, t=12, b=12),
+        legend=dict(title=None, orientation="h", y=1.02, yanchor="bottom"),
+        hovermode="x unified",
+        yaxis_rangemode="tozero",
+    )
+    st.plotly_chart(figure)
+
+
+st.html("""
+<style>
+.st-key-history_range button { border-radius: 2px; min-height: 44px; }
+.st-key-regional_cards [data-testid="stHorizontalBlock"] {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(145px, 100%), 1fr));
+}
+.st-key-regional_cards [data-testid="stColumn"] { width: 100%; min-width: 0; }
+</style>
+""")
 st.title("Bear's Singapore Air Quality Dashboard")
 st.caption(
-    "Hourly NEA/data.gov.sg readings processed through "
-    "GitHub Actions, Python and Supabase. Refer to NEA for official advice."
+    "Hourly readings from NEA via data.gov.sg. "
+    "See [NEA’s Haze portal](https://www.haze.gov.sg/) for official advice."
 )
 
-days = st.sidebar.selectbox(
-    "Date range",
-    options=[1, 3, 7, 30, 90],
-    index=2,
-)
-
-start_time = (
-    datetime.now(UTC) - timedelta(days=days)
-).isoformat()
-
-latest = fetch_all("v_latest_air_quality")
-history = fetch_all("v_air_quality_hourly_change", start_time=start_time)
+latest = prepare_readings(fetch_all("v_latest_air_quality"))
 freshness = fetch_all("v_pipeline_freshness")
 
-if latest.empty or history.empty:
-    st.warning("No air-quality observations are currently available.")
-    st.stop()
-
-history["observed_at"] = pd.to_datetime(history["observed_at"], utc=True)
-history["observed_at_sgt"] = history["observed_at"].dt.tz_convert(
-    "Asia/Singapore"
-)
-
-numeric_columns = [
-    "pm25_1h",
-    "pm25_24h",
-    "pm10_24h",
-    "psi_24h",
-    "pm25_change_1h",
-    "psi_change_1h",
-]
-
-for column in numeric_columns:
-    if column in history.columns:
-        history[column] = pd.to_numeric(history[column], errors="coerce")
-    if column in latest.columns:
-        latest[column] = pd.to_numeric(latest[column], errors="coerce")
-
-highest_pm25_row = latest.loc[latest["pm25_1h"].idxmax()]
-highest_psi_row = latest.loc[latest["psi_24h"].idxmax()]
-
-current_pm25 = float(highest_pm25_row["pm25_1h"])
-pm25_change = highest_pm25_row["pm25_change_1h"]
-pm25_delta = None if pd.isna(pm25_change) else f"{pm25_change:+.0f} in 1 hour"
-
-metric_1, metric_2, metric_3, metric_4, metric_5 = st.columns(5)
-
-metric_1.metric(
-    "Highest hourly PM2.5",
-    f"{current_pm25:.0f} µg/m³",
-    delta=pm25_delta,
-)
-metric_2.metric("PM2.5 band", highest_pm25_row["pm25_1h_band"])
-metric_3.metric("Highest 24-hour PSI", f"{highest_psi_row['psi_24h']:.0f}")
-metric_4.metric("Highest region", str(highest_pm25_row["region"]).title())
-
-if not freshness.empty:
-    age = float(freshness.iloc[0]["observation_age_hours"])
-    status = freshness.iloc[0]["freshness_status"]
-    metric_5.metric("Data freshness", status)
-    metric_5.caption(f"Latest observation: {age:.1f} hours old")
-
-if current_pm25 >= 151:
-    st.error("High hourly PM2.5 detected. Refer to official NEA health advice.")
-elif current_pm25 >= 56:
-    st.warning("Elevated hourly PM2.5 detected.")
-else:
-    st.success("Hourly PM2.5 is currently within NEA's Normal band.")
+if not freshness.empty and pd.notna(freshness.iloc[0]["observation_age_hours"]):
+    status = freshness.iloc[0]
+    observation = pd.Timestamp(status["latest_observation_utc"]).tz_convert(SGT)
+    age = float(status["observation_age_hours"])
+    freshness_label = (
+        f"Latest observation · {observation:%d %b %Y, %H:%M} SGT · {age:.1f} hours ago"
+    )
+    if status["freshness_status"] == "FRESH":
+        st.caption(freshness_label)
+    else:
+        st.warning(f"{status['freshness_status'].title()} data. {freshness_label}")
 
 tab_current, tab_trends, tab_patterns = st.tabs(
     ["Current conditions", "Recent trends", "Historical patterns"]
 )
 
 with tab_current:
-    st.subheader("Latest regional conditions")
-    st.dataframe(
-        latest[
-            [
-                "region",
-                "pm25_1h",
-                "pm25_1h_band",
-                "pm25_change_1h",
-                "psi_24h",
-                "psi_24h_category",
-            ]
-        ].sort_values("region"),
-        use_container_width=True,
-        hide_index=True,
-    )
+    st.subheader("Air quality by region")
+    st.caption("PM2.5 reflects the past hour. PSI summarises the past 24 hours.")
+    if latest.empty:
+        st.info("No regional readings are available.")
+    else:
+        render_regional_cards(latest)
 
-    map_figure = px.scatter_map(
-        latest,
-        lat="latitude",
-        lon="longitude",
-        color="pm25_1h",
-        size="pm25_1h",
-        hover_name="region",
-        hover_data={
-            "pm25_1h": True,
-            "pm25_1h_band": True,
-            "psi_24h": True,
-            "latitude": False,
-            "longitude": False,
-        },
-        zoom=9.5,
-        center={"lat": 1.3521, "lon": 103.8198},
-        height=520,
-    )
-    st.plotly_chart(map_figure, use_container_width=True)
+        mapped = latest.dropna(subset=["latitude", "longitude"])
+        if not mapped.empty:
+            st.subheader("Regional PM2.5 map")
+            map_figure = px.scatter_map(
+                mapped,
+                lat="latitude",
+                lon="longitude",
+                color="pm25_1h_band",
+                color_discrete_map={
+                    band: colors[1] for band, colors in PM25_BANDS.items()
+                },
+                category_orders={"pm25_1h_band": list(PM25_BANDS)},
+                labels=CHART_LABELS,
+                hover_name="region",
+                hover_data={
+                    "pm25_1h": ":.0f",
+                    "psi_24h": ":.0f",
+                    "psi_24h_category": True,
+                    "latitude": False,
+                    "longitude": False,
+                },
+                zoom=9.5,
+                center={"lat": 1.3521, "lon": 103.8198},
+                height=380,
+            )
+            map_figure.update_traces(marker_size=16)
+            map_figure.update_layout(
+                margin=dict(l=0, r=0, t=0, b=0),
+                legend=dict(title=None, orientation="h", y=1.02, yanchor="bottom"),
+            )
+            st.plotly_chart(map_figure)
+
+        with st.expander("Regional readings and hourly changes"):
+            table_labels = {
+                **CHART_LABELS,
+                "pm25_change_1h": "PM2.5 change in 1 hour (µg/m³)",
+            }
+            st.dataframe(
+                latest[list(table_labels)].sort_values("region").rename(columns=table_labels),
+                column_config={
+                    CHART_LABELS["observed_at_sgt"]: st.column_config.DatetimeColumn(
+                        format="DD MMM YYYY, HH:mm", timezone=SGT
+                    ),
+                },
+                width="stretch",
+                hide_index=True,
+            )
 
 with tab_trends:
-    chosen_regions = st.multiselect(
-        "Regions",
-        options=sorted(history["region"].unique()),
-        default=sorted(history["region"].unique()),
+    days = st.segmented_control(
+        "History range",
+        options=list(HISTORY_RANGES),
+        default=7,
+        format_func=HISTORY_RANGES.__getitem__,
+        key="history_range",
     )
-    filtered = history[history["region"].isin(chosen_regions)]
+    if days is None:
+        st.info("Select a history range to see recent trends.")
+        history = pd.DataFrame()
+    else:
+        # Align the cutoff with hourly observations so it doubles as a cache key.
+        current_hour = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        start_time = (current_hour - timedelta(hours=days * 24 - 1)).isoformat()
+        history = prepare_readings(
+            fetch_all("v_air_quality_hourly_change", start_time=start_time)
+        )
+        if history.empty:
+            st.info("No observations in this range. Try a longer period.")
 
-    pm25_figure = px.line(
-        filtered,
-        x="observed_at_sgt",
-        y="pm25_1h",
-        color="region",
-        title="Hourly PM2.5 by region",
-    )
-    pm25_figure.add_hline(
-        y=56,
-        line_dash="dash",
-        line_color="orange",
-        annotation_text="Elevated: 56",
-    )
-    pm25_figure.add_hline(
-        y=151,
-        line_dash="dash",
-        line_color="red",
-        annotation_text="High: 151",
-    )
-    pm25_figure.add_hline(
-        y=251,
-        line_dash="dash",
-        line_color="darkred",
-        annotation_text="Very High: 251",
-    )
-    st.plotly_chart(pm25_figure, use_container_width=True)
-
-    psi_figure = px.line(
-        filtered,
-        x="observed_at_sgt",
-        y="psi_24h",
-        color="region",
-        title="24-hour PSI by region",
-    )
-    psi_figure.add_hline(
-        y=101,
-        line_dash="dash",
-        line_color="red",
-        annotation_text="Unhealthy: 101",
-    )
-    st.plotly_chart(psi_figure, use_container_width=True)
+    if not history.empty:
+        regions = sorted(history["region"].unique())
+        chosen_regions = st.multiselect("Regions", regions, default=regions)
+        if not chosen_regions:
+            st.info("Select at least one region to see its trend.")
+        else:
+            filtered = history[history["region"].isin(chosen_regions)]
+            hours = pd.date_range(
+                history["observed_at_sgt"].min(),
+                history["observed_at_sgt"].max(),
+                freq="h",
+            )
+            grid = pd.MultiIndex.from_product(
+                [chosen_regions, hours], names=["region", "observed_at_sgt"]
+            )
+            filtered = filtered.set_index(grid.names).reindex(grid).reset_index()
+            st.caption(
+                "Breaks in the lines show missing readings. Times are in SGT."
+            )
+            render_trend(
+                filtered, "pm25_1h", {56: "Elevated", 151: "High", 251: "Very High"}
+            )
+            render_trend(
+                filtered,
+                "psi_24h",
+                {101: "Unhealthy", 201: "Very Unhealthy", 301: "Hazardous"},
+            )
 
 with tab_patterns:
-    pattern_data = (
-        history.assign(hour_sgt=history["observed_at_sgt"].dt.hour)
-        .groupby(["region", "hour_sgt"], as_index=False)["pm25_1h"]
-        .mean()
-    )
-
-    heatmap = px.density_heatmap(
-        pattern_data,
-        x="hour_sgt",
-        y="region",
-        z="pm25_1h",
-        color_continuous_scale="YlOrRd",
-        title="Average hourly PM2.5 pattern",
-    )
-    st.plotly_chart(heatmap, use_container_width=True)
+    st.subheader("Average PM2.5 by hour of day")
+    if days is None:
+        st.info("Choose a history range in Recent trends.")
+    elif history.empty or history["pm25_1h"].isna().all():
+        st.info(
+            "No PM2.5 observations in this range. Try a longer range in Recent trends."
+        )
+    else:
+        st.caption(
+            f"Last {HISTORY_RANGES[days]} · Darker cells show higher averages. "
+            "Blank cells have no readings."
+        )
+        averages = (
+            history.assign(hour_sgt=history["observed_at_sgt"].dt.hour)
+            .pivot_table(index="region", columns="hour_sgt", values="pm25_1h")
+            .reindex(index=list(REGION_COLORS), columns=range(24))
+        )
+        heatmap = px.imshow(
+            averages,
+            labels={"x": "Hour of day (SGT)", "y": "Region", "color": PM25_LABEL},
+            color_continuous_scale="YlOrRd",
+            aspect="auto",
+            height=340,
+        )
+        heatmap.update_traces(
+            hoverongaps=False,
+            hovertemplate=(
+                "%{y} · %{x:02.0f}:00 SGT<br>"
+                "Average PM2.5: %{z:.1f} µg/m³<extra></extra>"
+            ),
+        )
+        heatmap.update_xaxes(tickvals=list(range(0, 24, 3)))
+        heatmap.update_layout(
+            margin=dict(l=12, r=12, t=12, b=12),
+            coloraxis_colorbar_title="PM2.5<br>(µg/m³)",
+        )
+        st.plotly_chart(heatmap)
