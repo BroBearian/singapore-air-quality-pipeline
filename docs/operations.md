@@ -19,6 +19,19 @@ select * from public.v_pipeline_freshness;
 - **Delayed:** more than two and up to three hours old.
 - **Stale:** more than three hours old.
 
+## GitHub Actions inactivity
+
+GitHub automatically disables scheduled workflows in public repositories after
+60 days without repository activity. Scheduled runs can succeed while GitHub
+warns that the workflow is approaching this limit.
+
+If the workflow is disabled, open **Actions → Scheduled air-quality ETL** and
+choose **Enable workflow**. Confirm a subsequent run is marked as **schedule**
+and succeeds. Use **Run workflow** with `days_back: 1` to restore recent
+readings immediately if needed. For longer gaps, use the recovery steps below.
+
+[GitHub's workflow inactivity and re-enabling documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)
+
 ## Recovery
 
 1. Inspect the failed GitHub Actions step and `pipeline_runs.error_message` privately.
