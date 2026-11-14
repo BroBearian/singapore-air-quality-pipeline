@@ -226,9 +226,14 @@ st.html("""
 }
 .aq-compass .aq-region.central { border-color: currentColor; }
 .aq-compass h3 { margin: 0 0 0.35rem; padding: 0; font-size: 1.05rem; }
-.aq-compass dl, .aq-compass dd { margin: 0; }
+/* Clear Streamlit's definition-list indentation inside compass cards. */
+.aq-compass .aq-region dl,
+.aq-compass .aq-region dd {
+    margin: 0;
+    padding-inline: 0;
+}
+.aq-compass .aq-region dd { margin-bottom: 0.4rem; line-height: 1.3; }
 .aq-compass dt { font-size: 0.75rem; }
-.aq-compass dd { margin-bottom: 0.4rem; line-height: 1.3; }
 .aq-compass strong { font-size: clamp(0.85rem, 2.7vw, 1.2rem); }
 .aq-compass small, .aq-compass .aq-status { display: block; font-size: 0.73rem; }
 .aq-compass .aq-status::before {
