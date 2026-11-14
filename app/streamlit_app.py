@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from html import escape
 
 import pandas as pd
 import plotly.express as px
@@ -97,31 +98,48 @@ def format_reading(value: float, suffix: str = "") -> str:
     return "Unavailable" if pd.isna(value) else f"{value:.0f}{suffix}"
 
 
-def render_regional_cards(latest: pd.DataFrame) -> None:
-    with st.container(key="regional_cards"):
-        columns = st.columns(len(REGION_COLORS), gap="small")
+def render_regional_compass(latest: pd.DataFrame) -> None:
     by_region = latest.set_index("region")
+    regions = []
 
-    for region, column in zip(REGION_COLORS, columns, strict=True):
-        with column.container(border=True):
-            st.markdown(f"**{region}**")
-            if region not in by_region.index:
-                st.caption("No readings")
-                continue
-
+    for region in ("North", "West", "Central", "East", "South"):
+        if region in by_region.index:
             row = by_region.loc[region]
             pm25 = format_reading(row["pm25_1h"], " µg/m³")
             psi = format_reading(row["psi_24h"])
-            band = row["pm25_1h_band"]
-            category = row["psi_24h_category"]
+            band = str(row["pm25_1h_band"])
+            category = str(row["psi_24h_category"])
             pm25_color = PM25_BANDS.get(band, PM25_BANDS["Unknown"])[0]
             psi_color = PSI_COLORS.get(category, "gray")
+            observed = f"{row['observed_at_sgt']:%d %b, %H:%M} SGT"
+            readings = f"""
+                <dl>
+                    <dt>1-hour PM2.5</dt>
+                    <dd><strong>{pm25}</strong>
+                        <span class="aq-status {pm25_color}">{escape(band)}</span>
+                    </dd>
+                    <dt>{PSI_LABEL}</dt>
+                    <dd><strong>{psi}</strong>
+                        <span class="aq-status {psi_color}">{escape(category)}</span>
+                    </dd>
+                </dl>
+                <small>{observed}</small>
+            """
+        else:
+            readings = "<p>No readings</p>"
 
-            st.caption("1-hour PM2.5")
-            st.markdown(f"**{pm25}**  \n:{pm25_color}-badge[{band}]")
-            st.caption(PSI_LABEL)
-            st.markdown(f"**{psi}**  \n:{psi_color}-badge[{category}]")
-            st.caption(f"{row['observed_at_sgt']:%d %b, %H:%M} SGT")
+        regions.append(f"""
+            <section class="aq-region {region.lower()}" aria-label="{region}">
+                <h3>{region}</h3>
+                {readings}
+            </section>
+        """)
+
+    st.html(
+        '<div class="aq-compass" role="group" aria-label="Air quality compass">'
+        + "".join(regions)
+        + "</div>"
+    )
 
 
 def render_trend(
@@ -179,11 +197,50 @@ def render_trend(
 st.html("""
 <style>
 .st-key-history_range button { border-radius: 2px; min-height: 44px; }
-.st-key-regional_cards [data-testid="stHorizontalBlock"] {
+.aq-compass {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(145px, 100%), 1fr));
+    grid-template-areas: ". north ." "west central east" ". south .";
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(0.25rem, 1.5vw, 0.85rem);
+    max-width: 40rem;
+    margin: 0 auto 0.75rem;
+    text-align: center;
 }
-.st-key-regional_cards [data-testid="stColumn"] { width: 100%; min-width: 0; }
+.aq-compass .north { grid-area: north; }
+.aq-compass .west { grid-area: west; }
+.aq-compass .central { grid-area: central; }
+.aq-compass .east { grid-area: east; }
+.aq-compass .south { grid-area: south; }
+.aq-compass .aq-region {
+    min-width: 0;
+    padding: clamp(0.25rem, 1.35vw, 0.8rem);
+    background: var(--secondary-background-color, transparent);
+    border: 1px solid currentColor;
+    border-color: color-mix(in srgb, currentColor 24%, transparent);
+    border-radius: 0.5rem;
+    overflow-wrap: anywhere;
+}
+.aq-compass .aq-region.central { border-color: currentColor; }
+.aq-compass h3 { margin: 0 0 0.35rem; padding: 0; font-size: 1.05rem; }
+.aq-compass dl, .aq-compass dd { margin: 0; }
+.aq-compass dt { font-size: 0.75rem; }
+.aq-compass dd { margin-bottom: 0.4rem; line-height: 1.3; }
+.aq-compass strong { font-size: clamp(0.85rem, 2.7vw, 1.2rem); }
+.aq-compass small, .aq-compass .aq-status { display: block; font-size: 0.73rem; }
+.aq-compass .aq-status::before {
+    content: "";
+    display: inline-block;
+    width: 0.45rem;
+    height: 0.45rem;
+    margin-right: 0.24rem;
+    border-radius: 50%;
+    background: var(--aq-status-color, #6b7280);
+    vertical-align: 0.08rem;
+}
+.aq-compass .green { --aq-status-color: #147d64; }
+.aq-compass .orange { --aq-status-color: #b25b05; }
+.aq-compass .red { --aq-status-color: #bc392e; }
+.aq-compass .violet { --aq-status-color: #8b389d; }
 </style>
 """)
 st.title("Bear's Singapore Air Quality Dashboard")
@@ -213,11 +270,13 @@ tab_current, tab_trends, tab_patterns = st.tabs(
 
 with tab_current:
     st.subheader("Air quality by region")
-    st.caption("PM2.5 reflects the past hour. PSI summarises the past 24 hours.")
+    st.caption(
+        "PM2.5 reflects the past hour. PSI summarises the past 24 hours."
+    )
     if latest.empty:
         st.info("No regional readings are available.")
     else:
-        render_regional_cards(latest)
+        render_regional_compass(latest)
 
         mapped = latest.dropna(subset=["latitude", "longitude"])
         if not mapped.empty:
