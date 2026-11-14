@@ -219,6 +219,10 @@ st.html("""
     border-color: color-mix(in srgb, currentColor 24%, transparent);
     border-radius: 0.5rem;
     overflow-wrap: anywhere;
+    text-align: center;
+}
+.aq-compass .aq-region :is(h3, dl, dt, dd, strong, p, small, .aq-status) {
+    text-align: center;
 }
 .aq-compass .aq-region.central { border-color: currentColor; }
 .aq-compass h3 { margin: 0 0 0.35rem; padding: 0; font-size: 1.05rem; }
