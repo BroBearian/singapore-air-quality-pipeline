@@ -202,7 +202,10 @@ st.html("""
     grid-template-areas: ". north ." "west central east" ". south .";
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: clamp(0.25rem, 1.5vw, 0.85rem);
-    max-width: 40rem;
+    max-width: 64rem;
+    padding: clamp(.35rem, 2vw, 1.5rem);
+    border-radius: .75rem;
+    background: #dcebed url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'-20%20-20%201040%20561'%3E%3Cpath%20d%3D'M977%20173L995%20192L1000%20206L998%20223L987%20251L961%20282L891%20348L570%20520L553%20521L440%20519L33%20405L20%20399L11%20389L4%20378L0%20362L1%20347L7%20318L81%20152L88%20139L103%20116L122%2095L151%2067L175%2054L203%2044L456%201L493%200L527%205L580%2029L666%2078L701%20102L714%20109L913%20162L977%20173Z'%20fill%3D'%2373ad95'%20stroke%3D'%23397462'%20stroke-width%3D'3'%2F%3E%3C%2Fsvg%3E") center / contain no-repeat;
     margin: 0 auto 0.75rem;
     text-align: center;
 }
@@ -213,8 +216,12 @@ st.html("""
 .aq-compass .south { grid-area: south; }
 .aq-compass .aq-region {
     min-width: 0;
+    width: min(100%, 11rem);
+    box-sizing: border-box;
+    justify-self: center;
     padding: clamp(0.25rem, 1.35vw, 0.8rem);
-    background: var(--secondary-background-color, transparent);
+    background: var(--secondary-background-color, Canvas);
+    color: var(--text-color, CanvasText);
     border: 1px solid currentColor;
     border-color: color-mix(in srgb, currentColor 24%, transparent);
     border-radius: 0.5rem;
@@ -273,11 +280,7 @@ if not freshness.empty and pd.notna(freshness.iloc[0]["observation_age_hours"]):
     else:
         st.warning(f"{status['freshness_status'].title()} data. {freshness_label}")
 
-tab_current, tab_trends, tab_patterns = st.tabs(
-    ["Current conditions", "Recent trends", "Historical patterns"]
-)
-
-with tab_current:
+with st.container():
     st.subheader("Air quality by region")
     st.caption(
         "PM2.5 reflects the past hour. PSI summarises the past 24 hours."
@@ -287,37 +290,7 @@ with tab_current:
     else:
         render_regional_compass(latest)
 
-        mapped = latest.dropna(subset=["latitude", "longitude"])
-        if not mapped.empty:
-            st.subheader("Regional PM2.5 map")
-            map_figure = px.scatter_map(
-                mapped,
-                lat="latitude",
-                lon="longitude",
-                color="pm25_1h_band",
-                color_discrete_map={
-                    band: colors[1] for band, colors in PM25_BANDS.items()
-                },
-                category_orders={"pm25_1h_band": list(PM25_BANDS)},
-                labels=CHART_LABELS,
-                hover_name="region",
-                hover_data={
-                    "pm25_1h": ":.0f",
-                    "psi_24h": ":.0f",
-                    "psi_24h_category": True,
-                    "latitude": False,
-                    "longitude": False,
-                },
-                zoom=9.5,
-                center={"lat": 1.3521, "lon": 103.8198},
-                height=380,
-            )
-            map_figure.update_traces(marker_size=16)
-            map_figure.update_layout(
-                margin=dict(l=0, r=0, t=0, b=0),
-                legend=dict(title=None, orientation="h", y=1.02, yanchor="bottom"),
-            )
-            st.plotly_chart(map_figure)
+        st.caption("Singapore mainland outline · [Map data](https://github.com/mledoze/countries/blob/master/data/sgp.geo.json) · Regional positions are approximate.")
 
         with st.expander("Regional readings and hourly changes"):
             table_labels = {
@@ -335,7 +308,8 @@ with tab_current:
                 hide_index=True,
             )
 
-with tab_trends:
+with st.container():
+    st.subheader("Recent trends")
     days = st.segmented_control(
         "History range",
         options=list(HISTORY_RANGES),
@@ -384,7 +358,7 @@ with tab_trends:
                 {101: "Unhealthy", 201: "Very Unhealthy", 301: "Hazardous"},
             )
 
-with tab_patterns:
+with st.expander("Historical patterns"):
     st.subheader("Average PM2.5 by hour of day")
     if days is None:
         st.info("Choose a history range in Recent trends.")
