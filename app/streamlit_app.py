@@ -205,7 +205,7 @@ st.html("""
     max-width: 64rem;
     padding: clamp(.35rem, 2vw, 1.5rem);
     border-radius: .75rem;
-    background: url("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=103.57,1.19,104.08,1.50&bboxSR=4326&imageSR=3857&size=1200,730&format=jpg&f=image") center / contain no-repeat,
+    background: url("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=103.57,1.19,104.08,1.50&bboxSR=4326&imageSR=3857&size=1200,730&format=jpg&f=image") center / cover no-repeat,
                 url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'-20%20-20%201040%20561'%3E%3Cpath%20d%3D'M977%20173L995%20192L1000%20206L998%20223L987%20251L961%20282L891%20348L570%20520L553%20521L440%20519L33%20405L20%20399L11%20389L4%20378L0%20362L1%20347L7%20318L81%20152L88%20139L103%20116L122%2095L151%2067L175%2054L203%2044L456%201L493%200L527%205L580%2029L666%2078L701%20102L714%20109L913%20162L977%20173Z'%20fill%3D'%2373ad95'%20stroke%3D'%23397462'%20stroke-width%3D'3'%2F%3E%3C%2Fsvg%3E") center / contain no-repeat #dcebed;
     margin: 0 auto 0.75rem;
     text-align: center;
@@ -267,19 +267,6 @@ st.caption(
 )
 
 latest = prepare_readings(fetch_all("v_latest_air_quality"))
-freshness = fetch_all("v_pipeline_freshness")
-
-if not freshness.empty and pd.notna(freshness.iloc[0]["observation_age_hours"]):
-    status = freshness.iloc[0]
-    observation = pd.Timestamp(status["latest_observation_utc"]).tz_convert(SGT)
-    age = float(status["observation_age_hours"])
-    freshness_label = (
-        f"Latest observation · {observation:%d %b %Y, %H:%M} SGT · {age:.1f} hours ago"
-    )
-    if status["freshness_status"] == "FRESH":
-        st.caption(freshness_label)
-    else:
-        st.warning(f"{status['freshness_status'].title()} data. {freshness_label}")
 
 with st.container():
     st.subheader("Air quality by region")
